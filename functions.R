@@ -94,3 +94,115 @@ cascade_sim_par <- function(j, net, adj, p1, alpha, total = 1000){
   out.df <- out.df %>% mutate(ID = str_c(j,ID,sep = "_"))
   return(out.df)
 }
+
+# to find the EECC
+
+EECC_generator <- function(net, max_cl_size = NaN){
+  net.el <- net %>% as_edgelist()
+  net.el <- tibble(vertex_1 = net.el[,1], vertex_2 = net.el[,2])
+  
+  C <- max_cliques(net)
+  a <- length(C) # this is just to make sure all cliques have different IDs
+  
+  cliques <- tibble(vertex_1 = character(), vertex_2 = character(), cl_ID = NA)
+  
+  EECC <- tibble(vertex_1 = character(), vertex_2 = character(), cl_ID = NA)
+  
+  # make a data frame with the cliques as edgelists
+  
+  for (i in 1:length(C)) {
+    vertices <- C[[i]]$name
+    cliques <- cliques %>% add_row(net.el %>% filter(vertex_1 %in% vertices & vertex_2 %in% vertices) %>% unique() %>%
+                                     mutate(cl_ID = i))
+  }
+  
+  cliques <- cliques %>% group_by(vertex_1, vertex_2) %>% mutate(num_cls = n())
+  
+  if(is.na(max_cl_size) == FALSE){
+    cliques <- cliques %>% group_by(cl_ID) %>% mutate(size = n_distinct(c(vertex_1, vertex_2)))
+  }
+  
+  # concern: can the edge A - B appear as B - A, it seems that this doesn't happen
+  
+  overlap_IDs <- cliques[cliques$num_cls>1,]$cl_ID %>% unique()
+  if(is.na(max_cl_size) == FALSE){
+    higher_order_IDs <- cliques[cliques$size > max_cl_size,]$cl_ID %>% unique()
+    overlap_IDs <- overlap_IDs[!overlap_IDs %in% higher_order_IDs]
+  }else{
+    higher_order_IDs <- numeric()
+  }
+  
+  EECC <- EECC %>% add_row(cliques %>% filter((!cl_ID %in% overlap_IDs) & (!cl_ID %in% higher_order_IDs)) %>% select(c(vertex_1, vertex_2, cl_ID)))
+  
+  # cliques is C in the algorithm
+  
+  ordinary_cliques <- cliques %>% filter(cl_ID %in% overlap_IDs)
+  if(is.na(max_cl_size) == FALSE){
+    higher_order_cliques <- cliques %>% filter(cl_ID %in% higher_order_IDs)
+  }
+  
+  j = 0
+  while (nrow(ordinary_cliques)>0) {
+    j <- j + 1
+    c_net <- ordinary_cliques %>% graph_from_data_frame(directed = FALSE)
+    # find the new cliques
+    C <- max_cliques(c_net)
+    
+    ordinary_cliques <- tibble(vertex_1 = character(), vertex_2 = character(), cl_ID = NA)
+    
+    for (i in 1:length(C)) {
+      vertices <- C[[i]]$name
+      # the 100*j should be changed some way (if j > 100)
+      ordinary_cliques <- ordinary_cliques %>% add_row(net.el %>% filter(vertex_1 %in% vertices & vertex_2 %in% vertices) %>% unique() %>%
+                                                         mutate(cl_ID = (a*j + i)))
+    }
+    
+    ordinary_cliques <- ordinary_cliques %>% group_by(vertex_1, vertex_2) %>% mutate(num_cls = n(), edge_id = cur_group_id()) %>% ungroup()
+    
+    clique_to_add_ordered <- ordinary_cliques %>% group_by(cl_ID) %>% mutate(num_edges = n(), shared_edge = num_cls>1, shared_edge_num = sum(shared_edge), rho = shared_edge_num/num_edges) %>%
+      arrange(rho, desc(num_edges)) %>% select(vertex_1, vertex_2, cl_ID, edge_id)
+    clique_to_add <- clique_to_add_ordered %>% filter(cl_ID == clique_to_add_ordered$cl_ID[1])
+    EECC <- EECC %>% add_row(clique_to_add %>% select(c(vertex_1, vertex_2, cl_ID)))
+    ordinary_cliques <- ordinary_cliques %>% filter(cl_ID != clique_to_add_ordered$cl_ID[1], !edge_id %in% clique_to_add$edge_id)
+  }
+  old_j <- j
+  if(is.na(max_cl_size) == FALSE){
+    # remove higher-order edges that are already in the EECC
+    higher_order_cliques <- higher_order_cliques %>% anti_join(EECC, by = c("vertex_1", "vertex_2"))
+    j = 0
+    while (nrow(higher_order_cliques)>0) {
+      j <- j + 1
+      c_net <- higher_order_cliques %>% graph_from_data_frame(directed = FALSE)
+      # find the new cliques
+      C <- max_cliques(c_net)
+      
+      higher_order_cliques <- tibble(vertex_1 = character(), vertex_2 = character(), cl_ID = NA)
+      
+      for (i in 1:length(C)) {
+        vertices <- C[[i]]$name
+        # the 100*j should be changed some way (if j > 100)
+        higher_order_cliques <- higher_order_cliques %>% add_row(net.el %>% filter(vertex_1 %in% vertices & vertex_2 %in% vertices) %>% unique() %>%
+                                                                   mutate(cl_ID = (a*(j+old_j) + i)))
+      }
+      
+      higher_order_cliques <- higher_order_cliques %>% group_by(vertex_1, vertex_2) %>% mutate(num_cls = n(), edge_id = cur_group_id()) %>% ungroup()
+      
+      clique_list <- higher_order_cliques %>% 
+        group_by(cl_ID) %>% 
+        mutate(num_edges = n(), size = n_distinct(c(vertex_1, vertex_2)), shared_edge = num_cls>1, shared_edge_num = sum(shared_edge), rho = shared_edge_num/num_edges) %>%
+        arrange(rho, desc(num_edges))
+      cliques_below_max <- clique_list %>% filter(size <= max_cl_size) %>%
+        select(vertex_1, vertex_2, cl_ID, edge_id, size)
+      if(nrow(cliques_below_max)>0){
+        clique_to_add <- cliques_below_max %>% filter(cl_ID == cliques_below_max$cl_ID[1])
+      }else{
+        full_clique_to_add <- clique_list %>% filter(cl_ID == clique_list$cl_ID[1])
+        clique_to_add_vertices <- c(full_clique_to_add$vertex_1, full_clique_to_add$vertex_2) %>% unique() %>% sample(size = max_cl_size)
+        clique_to_add <- full_clique_to_add %>% filter(vertex_1 %in% clique_to_add_vertices & vertex_2 %in% clique_to_add_vertices)
+      }
+      higher_order_cliques <- higher_order_cliques %>% filter(!edge_id %in% clique_to_add$edge_id)
+      EECC <- EECC %>% add_row(clique_to_add %>% select(c(vertex_1, vertex_2, cl_ID)))
+    }
+  }
+  return(EECC)
+}
