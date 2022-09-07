@@ -57,9 +57,6 @@ cd_size_pgf <- function(x, y, n = 100, p1 = 0.02, alpha = 0.2, deg_pgf, dGdx, dG
 # for sanity, we might want to check that the pgf returns a 1 when x=y=1
 cd_size_pgf(1,1, deg_pgf = double_poisson_pgf, dGdx = pois_dGds3, dGdy = pois_dGds1)
 
-pois_net <- net_gen_double_poisson(n = 10000, v = 4, u = 1)
-pois_adj <- as_adj(pois_net)
-
 ########################################################################
 # Evaluate the pgf at points in the complex plane and save to csv file
 ########################################################################
@@ -83,3 +80,52 @@ pgf_to_invert <- pgf_evaluated.df %>% mutate(P_ft = pgf_evaluated) %>%
 
 pgf_to_invert %>% write_csv("joint_dist_fft.csv")
 
+# next step is to run the "joint_pgf_inversion.py" script
+
+joint_dist_size_cd <- read_delim("simple_contagion_probabilities.csv", col_names = FALSE, delim= ' ') %>% as.matrix()
+
+# moments of the distribution to find the correlation
+
+# X - size, Y - cumulative depth
+
+E_X <- sum(rowSums(joint_dist_size_cd)*(0:49))
+E_Y <- sum(colSums(joint_dist_size_cd)*(0:49))
+E_X_squared <- sum(rowSums(joint_dist_size_cd)*((0:49)^2))
+E_Y_squared <- sum(colSums(joint_dist_size_cd)*((0:49)^2))
+E_XY <- sum(t(joint_dist_size_cd*(0:49))*(0:49))
+
+pearson_correlation <- (E_XY - (E_X*E_Y))/(sqrt(E_X_squared - (E_X^2))*sqrt(E_Y_squared - (E_Y^2)))
+
+EATD <- sum(t(joint_dist_size_cd[2:50,]/(1:49))*(0:49))
+
+################################
+# compare to simulations
+################################
+
+pois_net <- net_gen_double_poisson(n = 10000, v = 4, u = 1)
+pois_adj <- as_adj(pois_net)
+
+# make a cluster with 6 cores - adapt this to your own computer
+cluster <- makeCluster(6)
+registerDoParallel(cluster)
+
+# increase "total" for more simulations
+tic()
+pois_sims <- foreach(i=1:6, .combine = "rbind", .packages = c("igraph", "dplyr", "stringr")) %dopar%
+  cascade_sim_par(i, net = pois_net, adj = pois_adj, p1 = 0.05, alpha = 0, total = 1667)
+toc()
+
+stopImplicitCluster()
+
+size_cd_dist.df <- pois_sims %>%
+  group_by(ID) %>%
+  summarise(size = n_distinct(c(parent, child)), cd = sum(generation)) %>%
+  group_by(size, cd) %>% summarise(N = n()) %>% ungroup()
+
+n_zero <- 6*1667 - sum(size_cd_dist.df$N)
+
+size_cd_dist.df <- size_cd_dist.df %>% add_row(tibble(size = 1, cd = 0, N = n_zero)) %>% arrange(size, cd) %>% mutate(p = N/sum(N))
+
+EATD_sim <- size_cd_dist.df %>% mutate(average_depth = cd/size) %>% summarise(EATD = sum(p*average_depth))
+
+pearson_correlation_sim <- size_cd_dist.df %>% uncount(N) %>% select(-p) %>% summarise(pearson_correlation = cor(size, cd))

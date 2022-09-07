@@ -12,4 +12,4 @@ P_transformed = P_transformed.reshape(50,50)
 pmf = np.fft.ifft2(P_transformed)
 pmf = pmf.real
 
-np.savetxt('20220806_sc_probabilities.csv',pmf)
+np.savetxt('simple_contagion_probabilities.csv',pmf)
