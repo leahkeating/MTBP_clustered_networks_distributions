@@ -8,10 +8,6 @@
 
 source("functions.R")
 
-# want to calculate the cascade size distribution from a single clique
-# pgf for each clique type
-pk <- function(k, p = 0.05, alpha = 0.05) 1 - ( (1 - p) * (1-alpha)^(k-1))
-
 # Newman uses a doubly poisson degree distribution in his paper
 # v is the mean number of triangles per vertex (dummy variable y)
 # u is the mean number of single links per vertex (dummy variable x)

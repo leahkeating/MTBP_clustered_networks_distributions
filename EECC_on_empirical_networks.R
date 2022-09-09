@@ -22,6 +22,110 @@ adjacency <- as_adj(net)
 
 EECC <- EECC_generator(net, max_cl_size = 3)
 
+# check that we only have 2 and 3 cliques
+
 EECC %>% group_by(cl_ID) %>%
   summarise(clique_size = n_distinct(c(vertex_1, vertex_2))) %>% arrange(desc(clique_size)) %>%
   group_by(clique_size) %>% summarise(n())
+
+EECC <- EECC %>% group_by(cl_ID) %>% mutate(size = n_distinct(c(vertex_1, vertex_2))) %>%
+  arrange(desc(size))
+
+EECC_deg_dist <- EECC %>% ungroup() %>% select(-vertex_2) %>% rename(vertex = vertex_1) %>%
+  add_row(EECC %>% ungroup() %>% select(-vertex_1) %>% rename(vertex = vertex_2)) %>% unique() %>%
+  arrange(desc(size), cl_ID) %>%
+  group_by(vertex) %>% summarise(n_3 = sum(size == 3), n_2 = sum(size == 2))
+
+EECC_deg_prob <- EECC_deg_dist %>% #filter(n_3!=0 & n_2!=0) %>%
+  group_by(n_3, n_2) %>% summarise(count = n()) %>%
+  ungroup() %>% mutate(p = count/sum(count)) # can build the pgf from this
+
+# Get a pgf from this
+
+EECC_pgf <- function(x, y, deg_prob = EECC_deg_prob){
+  return(sum((deg_prob$p)*(x^deg_prob$n_2)*(y^deg_prob$n_3)))
+}
+EECC_dGdx <- function(x, y, deg_prob = EECC_deg_prob){
+  return(sum((deg_prob$p)*(deg_prob$n_2)*(x^(deg_prob$n_2 - 1))*(y^deg_prob$n_3)))
+}
+EECC_dGdy <- function(x, y, deg_prob = EECC_deg_prob){
+  return(sum((deg_prob$p)*(deg_prob$n_3)*(x^(deg_prob$n_2))*(y^(deg_prob$n_3 - 1))))
+}
+
+pgf_size_vec <- function(x) sapply(x, size_pgf, pk = pk, n = 1000, p = 0.08, alpha = 0.01, deg_pgf = EECC_pgf, dGdx = EECC_dGdx, dGdy = EECC_dGdy)
+
+theoretical_size_dist.df <- invert_pgf_via_ifft(pgf_size_vec, M = 100)
+theoretical_size_dist.df <- theoretical_size_dist.df %>% filter(cascade_size>0)
+theoretical_size_dist.df <- theoretical_size_dist.df %>% mutate(cdf = cumsum(prob), ccdf = 1-cdf)
+
+#######################
+# simulate cascades
+#######################
+
+cluster <- makeCluster(6)
+registerDoParallel(cluster)
+
+tic()
+cascades.df <- foreach(i=1:6, .combine = "rbind", .packages = c("igraph", "dplyr", "stringr")) %dopar%
+  cascade_sim_par(j = i, net = net, adj = adjacency, p = 0.08, alpha = 0.01, total = 1667)
+toc()
+
+stopImplicitCluster()
+
+cascade_size_dist.df <- cascades.df %>% group_by(ID) %>%
+  summarise(size = n_distinct(c(parent, child))) %>% group_by(size) %>%
+  summarise(n = n()) %>% ungroup()
+num_size_1 <- cascade_size_dist.df %>% summarise(1667*6 - sum(n)) %>% as.numeric()
+cascade_size_dist.df <- cascade_size_dist.df %>% add_row(size = 1, n = num_size_1) %>% arrange(size)
+cascade_size_dist.df <- cascade_size_dist.df %>% mutate(p = n/sum(n), cdf = cumsum(p), ccdf = 1-cdf)
+
+#### try SED
+
+degree_dist <- net %>% degree() %>% tibble(k = .) %>%
+  group_by(k) %>% summarise(n = n()) %>%
+  ungroup() %>% mutate(p = n/sum(n))
+
+# offspring distributions
+
+f_tilde <- function(x, p, degree_dist){
+  return(sum(degree_dist$p * ((p*x + 1 - p)^degree_dist$k)))
+}
+
+f <- function(x, p, degree_dist){
+  excess_dist <- (degree_dist$k)*(degree_dist$p)/sum((degree_dist$k)*(degree_dist$p))
+  return(sum(excess_dist * ((p*x + 1 - p)^degree_dist$k)))
+}
+
+cascade_size_simple_pgf <- function(x,p,n,degree_dist){
+  G_prev <- x
+  for (i in 1:(n-1)) {
+    G <- x*f(x = G_prev, p = p, degree_dist = degree_dist)
+    G_prev <- G
+  }
+  G_tilde <- x*f_tilde(x = G_prev, p = p, degree_dist = degree_dist)
+  return(G_tilde)
+}
+
+pgf_size_simple_vec <- function(x) sapply(x, cascade_size_simple_pgf, n = 1000, p = 0.08, degree_dist = degree_dist)
+
+theoretical_size_dist_simple.df <- invert_pgf_via_ifft(pgf_size_simple_vec, M = 100)
+
+theoretical_size_dist_simple.df <- theoretical_size_dist_simple.df %>% filter(cascade_size>0)
+
+theoretical_size_dist_simple.df <- theoretical_size_dist_simple.df %>%
+  mutate(cdf = cumsum(prob), ccdf = 1-cdf)
+
+require(scales)
+cascade_size_dist.df %>% rename(cascade_size = size, prob = p) %>% filter(ccdf > 0) %>%
+  ggplot(aes(x = cascade_size, y = ccdf)) +
+  geom_line(data = theoretical_size_dist.df, colour = "black", size = 0.75) +
+  geom_line(data = theoretical_size_dist_simple.df, colour = "black", size = 0.75, linetype = "dashed") +
+  geom_point(colour = "black", fill = "#05a4fa", size = 2, alpha = 1, 
+             shape = 21) +
+  scale_y_log10(limits = c(10^(-6),1), breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x))) +
+  scale_x_log10(breaks = trans_breaks("log10", function(x) 10^x),
+                labels = trans_format("log10", math_format(10^.x))) +
+  ylab("ccdf") +
+  xlab("cascade size")
+
