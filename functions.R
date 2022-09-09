@@ -9,6 +9,12 @@ library(tidyverse)
 library(igraph)
 library(doParallel)
 library(tictoc)
+library(cowplot)
+theme_set(theme_cowplot())
+
+# want to calculate the cascade size distribution from a single clique
+# pgf for each clique type
+pk <- function(k, p = 0.05, alpha = 0.05) 1 - ( (1 - p) * (1-alpha)^(k-1))
 
 projection_from_bipartite_df <- function(vertex_clique.df, nodes){
   bipartite.net <- graph_from_data_frame(vertex_clique.df, directed = FALSE)
@@ -206,3 +212,42 @@ EECC_generator <- function(net, max_cl_size = NaN){
   }
   return(EECC)
 }
+
+# cascade size pgf
+
+size_pgf <- function(x, n, pk, alpha, p, deg_pgf, dGdx, dGdy){
+  if(n>0){
+    p1 <- pk(k = 1, alpha = alpha, p = p)
+    p2 <- pk(k = 2, alpha = alpha, p = p)
+    # offspring dist from triangle
+    g_r <- function(x,y) dGdy(x=x,y=y)/dGdy(x=1,y=1)
+    # offspring dist from link
+    g_q <- function(x,y) dGdx(x=x,y=y)/dGdx(x=1,y=1)
+    # initial conditions
+    G_prev <- c(1,1,1) # zero generations to grow
+    for (i in 1:n) {
+      G_new <- numeric(6)
+      G_new[1] <- (1-p1)^2 +2*p1*(1-p1)*x*G_prev[2]*g_r(G_prev[3],G_prev[1]) + (p1^2)*(x^2)*(g_r(G_prev[3],G_prev[1])^2)
+      G_new[2] <- 1 - p2 + p2*x*g_r(G_prev[3],G_prev[1])
+      G_new[3] <- 1-p1 + p1*x*g_q(G_prev[3],G_prev[1])
+      G_prev <- G_new
+    }
+    G_tilde <- x*deg_pgf(x = G_new[3],y = G_new[1])
+  }else if(n == 0) G_tilde <- x
+  return(G_tilde)
+}
+
+# 1-D inversion
+
+invert_pgf_via_ifft <- function(gen_fn, M = 10^5){
+  x <- exp(2*pi*1i*(0:(M-1))/M)
+  
+  pdf <- Re(fft(gen_fn(x) %>% Conj(),inverse = TRUE))
+  pdf[pdf < 0] <- 0
+  pdf <- pdf/length(pdf)
+  
+  cas_dist <- tibble(cascade_size = 0:(length(pdf) - 1), prob = pdf) 
+  
+  return(cas_dist)
+}
+
