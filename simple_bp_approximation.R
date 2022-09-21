@@ -44,7 +44,7 @@ f <- function(x, degree_dist){
 }
 
 # here we have the iterative function for cascade size (as given in Appendix A)
-cascade_size_simple_pgf <- function(z,p,N=10000, dist = degree_dist){
+cascade_size_simple_pgf <- function(z,p,N=1000, dist = degree_dist){
   R <- 1
   for (i in 1:(N-1)) {
     R_new <- 1 - p + p*z*f(R, degree_dist = dist)
@@ -77,7 +77,7 @@ registerDoParallel(cluster)
 
 tic()
 cascades.df <- foreach(i=1:6, .combine = "rbind", .packages = c("igraph", "dplyr", "stringr")) %dopar%
-  cascade_sim_par(j=i, net = net, adj = adjacency, p1 = 0.05, alpha = 0.0, total = 1667)
+  cascade_sim_par(j=i, net = net, adj = adjacency, p1 = 0.05, alpha = 0.0, total = 16667)
 toc()
 
 stopImplicitCluster()
@@ -85,7 +85,7 @@ stopImplicitCluster()
 cascade_size_dist.df <- cascades.df %>% group_by(ID) %>%
   summarise(size = n_distinct(c(parent, child))) %>% group_by(size) %>%
   summarise(n = n()) %>% ungroup()
-num_size_1 <- cascade_size_dist.df %>% summarise(1667*6 - sum(n)) %>% as.numeric()
+num_size_1 <- cascade_size_dist.df %>% summarise(16667*6 - sum(n)) %>% as.numeric()
 cascade_size_dist.df <- cascade_size_dist.df %>% add_row(size = 1, n = num_size_1) %>% arrange(size)
 cascade_size_dist.df <- cascade_size_dist.df %>% mutate(p = n/sum(n), cdf = cumsum(p), ccdf = 1-cdf)
 
@@ -97,6 +97,5 @@ theoretical_cascade_size_simple.df %>% filter(cascade_size>0) %>%
   ggplot(., aes(x = cascade_size, y = prob)) +
   geom_line() +
   geom_point(data = cascade_size_dist.df) +
-  #geom_line(data = theoretical_size_dist_simple.df, colour = "red") +
   scale_y_log10(limits = c(10^(-6),10^(0))) +
   scale_x_log10()
