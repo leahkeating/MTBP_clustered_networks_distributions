@@ -10,6 +10,7 @@ library(igraph)
 library(doParallel)
 library(tictoc)
 library(cowplot)
+library(latex2exp)
 theme_set(theme_cowplot())
 
 # want to calculate the cascade size distribution from a single clique
