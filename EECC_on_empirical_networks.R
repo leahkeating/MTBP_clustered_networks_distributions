@@ -15,7 +15,7 @@ source("functions.R")
 
 # load data
 
-net <- read_graph("netscience.gml", format = "gml") %>%
+net <- read_graph("power.gml", format = "gml") %>%
   set_vertex_attr("name", value = as.character(1:gorder(.)))
 V(net)$name <- as.character(1:gorder(net))
 adjacency <- as_adj(net)
@@ -59,7 +59,7 @@ EECC_dGdy <- function(x, y, deg_prob = EECC_deg_prob){
   return(sum((deg_prob$p)*(deg_prob$n_3)*(x^(deg_prob$n_2))*(y^(deg_prob$n_3 - 1))))
 }
 
-pgf_size_vec <- function(x) sapply(x, size_pgf, pk = pk, n = 1000, p = 0.02, alpha = 0.2, deg_pgf = EECC_pgf, dGdx = EECC_dGdx, dGdy = EECC_dGdy)
+pgf_size_vec <- function(x) sapply(x, size_pgf, pk = pk, n = 1000, p = 0.04, alpha = 0.15, deg_pgf = EECC_pgf, dGdx = EECC_dGdx, dGdy = EECC_dGdy)
 
 theoretical_size_dist.df <- invert_pgf_via_ifft(pgf_size_vec, M = 100)
 theoretical_size_dist.df <- theoretical_size_dist.df %>% filter(cascade_size>0)
@@ -74,7 +74,7 @@ registerDoParallel(cluster)
 
 tic()
 cascades.df <- foreach(i=1:6, .combine = "rbind", .packages = c("igraph", "dplyr", "stringr")) %dopar%
-  cascade_sim_par(j = i, net = net, adj = adjacency, p = 0.02, alpha = 0.2, total = 166667)
+  cascade_sim_par(j = i, net = net, adj = adjacency, p = 0.01, alpha = 0.01, total = 16667)
 toc()
 
 stopImplicitCluster()
@@ -82,13 +82,13 @@ stopImplicitCluster()
 cascade_size_dist.df <- cascades.df %>% group_by(ID) %>%
   summarise(size = n_distinct(c(parent, child))) %>% group_by(size) %>%
   summarise(n = n()) %>% ungroup()
-num_size_1 <- cascade_size_dist.df %>% summarise(166667*6 - sum(n)) %>% as.numeric()
+num_size_1 <- cascade_size_dist.df %>% summarise(16667*6 - sum(n)) %>% as.numeric()
 cascade_size_dist.df <- cascade_size_dist.df %>% add_row(size = 1, n = num_size_1) %>% arrange(size)
 cascade_size_dist.df <- cascade_size_dist.df %>% mutate(p = n/sum(n), cdf = cumsum(p), ccdf = 1-cdf)
 
 #cascade_size_dist.df <- read_csv("powergrid_cascade_size.csv")
-#cascade_size_dist.df %>% write_csv("science_coauthorship_cascade_size.csv")
-#cascade_size_dist.df %>% write_csv("cascade_size_cc.csv")
+#cascade_size_dist.df <- read_csv("science_coauthorship_cascade_size.csv")
+#cascade_size_dist.df <- read_csv("cascade_size_cc.csv")
 
 #### try SED
 
@@ -117,7 +117,7 @@ cascade_size_simple_pgf <- function(z,p,N=1000, dist = degree_dist){
   return(R_tilde)
 }
 
-pgf_size_simple_vec <- function(x) sapply(x, cascade_size_simple_pgf, N = 1000, p = 0.02, dist = degree_dist)
+pgf_size_simple_vec <- function(x) sapply(x, cascade_size_simple_pgf, N = 1000, p = 0.04, dist = degree_dist)
 
 theoretical_size_dist_simple.df <- invert_pgf_via_ifft(pgf_size_simple_vec, M = 100)
 
@@ -126,16 +126,18 @@ theoretical_size_dist_simple.df <- theoretical_size_dist_simple.df %>% filter(ca
 theoretical_size_dist_simple.df <- theoretical_size_dist_simple.df %>%
   mutate(cdf = cumsum(prob), ccdf = 1-cdf)
 
+theoretical_size_dist.df <- theoretical_size_dist.df %>% filter(ccdf>0)
+theoretical_size_dist_simple.df <- theoretical_size_dist_simple.df %>% filter(ccdf>0)
 require(scales)
 cascade_size_dist.df %>% rename(cascade_size = size, prob = p) %>% filter(ccdf > 0) %>%
-  ggplot(aes(x = cascade_size, y = ccdf)) +
+  ggplot(aes(x = cascade_size, y = prob)) +
   geom_line(data = theoretical_size_dist.df, colour = "black", size = 1) +
   geom_line(data = theoretical_size_dist_simple.df, colour = "red", size = 1, linetype = "dashed") +
-  geom_point(colour = "black", fill = "#fc03ec", size = 2, alpha = 1, 
+  geom_point(colour = "black", fill = "#7f03fc", size = 2, alpha = 1, 
              shape = 21) +
   scale_y_log10(limits = c(10^(-6),1), breaks = trans_breaks("log10", function(x) 10^x),
                 labels = trans_format("log10", math_format(10^.x))) +
   scale_x_log10(limits = c(1,10^1.5), breaks = trans_breaks("log10", function(x) 10^x),
                 labels = trans_format("log10", math_format(10^.x))) +
-  ylab("ccdf") +
+  ylab("probability") +
   xlab("cascade size")

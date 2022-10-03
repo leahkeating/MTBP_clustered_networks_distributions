@@ -1,4 +1,4 @@
-# This GitHub contains the code used in the following preprint: *need to name the preprint*
+# This GitHub contains the code used in the following preprint: *A generating-function approach to modelling complex contagion on clustered networks with multi-type branching processes*
 
 ## Below we give a description of the files:
 
