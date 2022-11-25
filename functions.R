@@ -216,8 +216,8 @@ EECC_generator <- function(net, max_cl_size = NaN){
 
 # cascade size pgf
 
-size_pgf <- function(x, n, pk, alpha, p, deg_pgf, dGdx, dGdy){
-  if(n>0){
+size_pgf <- function(x, pk, alpha, p, deg_pgf, dGdx, dGdy, tol = 10^(-4), verbose = FALSE, max_n = 1000){
+#  if(n>0){
     p1 <- pk(k = 1, alpha = alpha, p = p)
     p2 <- pk(k = 2, alpha = alpha, p = p)
     # offspring dist from triangle
@@ -226,15 +226,22 @@ size_pgf <- function(x, n, pk, alpha, p, deg_pgf, dGdx, dGdy){
     g_q <- function(x,y) dGdx(x=x,y=y)/dGdx(x=1,y=1)
     # initial conditions
     G_prev <- c(1,1,1) # zero generations to grow
-    for (i in 1:n) {
-      G_new <- numeric(6)
+    G_new <- numeric(3)
+    G_prev_old <- G_prev
+    n <- 0
+    while(Mod(sum(G_new - G_prev_old))>tol) {
+      n <- n + 1
+      #G_new <- numeric(3)
       G_new[1] <- (1-p1)^2 +2*p1*(1-p1)*x*G_prev[2]*g_r(G_prev[3],G_prev[1]) + (p1^2)*(x^2)*(g_r(G_prev[3],G_prev[1])^2)
       G_new[2] <- 1 - p2 + p2*x*g_r(G_prev[3],G_prev[1])
       G_new[3] <- 1-p1 + p1*x*g_q(G_prev[3],G_prev[1])
+      G_prev_old <- G_prev
       G_prev <- G_new
+      if (n > max_n) print("max iterations reached")
     }
     G_tilde <- x*deg_pgf(x = G_new[3],y = G_new[1])
-  }else if(n == 0) G_tilde <- x
+#  }else if(n == 0) G_tilde <- x
+  if(verbose) print(n)
   return(G_tilde)
 }
 
@@ -252,3 +259,29 @@ invert_pgf_via_ifft <- function(gen_fn, M = 10^5){
   return(cas_dist)
 }
 
+# generate a Newman-Miller network from any distribution
+
+net_gen_joint_dist <- function(n = 100, joint_dist){
+  nodes <- str_c("v_",1:n, sep="")
+  node_deg_indices <- sample(1:nrow(joint_dist),size = n, replace = TRUE, prob = joint_dist$p)
+  node_link_deg <- joint_dist$n_2[node_deg_indices]
+  node_tri_deg <- joint_dist$n_3[node_deg_indices]
+  tri_deg_sum <- sum(node_tri_deg)
+  link_deg_sum <- sum(node_link_deg)
+  i = 1
+  while (tri_deg_sum %% 3 != 0 | link_deg_sum %% 2 != 0) {
+    nodes <- c(nodes, str_c("v_", n+i))
+    new_deg_index <- sample(1:nrow(joint_dist),size = 1, replace = TRUE, prob = joint_dist$p)
+    node_tri_deg <- c(node_tri_deg, joint_dist$n_3[new_deg_index])
+    node_link_deg <- c(node_link_deg, joint_dist$n_2[new_deg_index])
+    i = i + 1
+    tri_deg_sum <- sum(node_tri_deg)
+    link_deg_sum <- sum(node_link_deg)
+  }
+  three_cliques <- str_c("three_",1:(tri_deg_sum/3), sep = "") %>% rep(., each = 3) %>% sample()
+  two_cliques <- str_c("two_",1:(link_deg_sum/2), sep = "") %>% rep(., each = 2) %>% sample()
+  vertex_clique.df <- tibble(vertex = rep(nodes,node_tri_deg), clique = three_cliques) %>%
+    add_row(tibble(vertex = rep(nodes,node_link_deg), clique = two_cliques))
+  
+  net <- projection_from_bipartite_df(vertex_clique.df, nodes)
+}

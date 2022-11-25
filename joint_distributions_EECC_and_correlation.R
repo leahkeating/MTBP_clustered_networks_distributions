@@ -20,8 +20,14 @@ pois_dGds3 <- function(x, y, v = 4, u = 1) u*double_poisson_pgf(x, y, v, u) # pa
 # For real-world networks we need to infer the Newman-Miller distribution using the EECC
 #########################################################################################
 
-net <- read_graph("netscience.gml", format = "gml") %>%
+net <- read_graph("celegans_metabolic.net", format = "pajek") %>%
   set_vertex_attr("name", value = as.character(1:gorder(.)))
+
+# this bit gets the lcc
+lcc_id <- which(components(net)$csize == max(components(net)$csize))
+vertices_in_lcc <- V(net)[which(components(net)$membership == lcc_id)]
+net <- induced_subgraph(net, vertices_in_lcc)
+
 V(net)$name <- as.character(1:gorder(net))
 adjacency <- as_adj(net)
 
@@ -57,7 +63,7 @@ EECC_dGdy <- function(x, y, deg_prob = EECC_deg_prob){
 
 # function to evaluate the pgf at specific x and y values
 
-cd_size_pgf <- function(x, y, n = 100, p1 = 0.09, alpha = 0, deg_pgf, dGdx, dGdy){
+cd_size_pgf <- function(x, y, n = 100, p1 = 0.01, alpha = 0.1, deg_pgf, dGdx, dGdy){
   p2 <- pk(2, p = p1, alpha = alpha)
   # define functions
   
@@ -98,7 +104,7 @@ cd_size_pgf(1,1, deg_pgf = EECC_pgf, dGdx = EECC_dGdx, dGdy = EECC_dGdy)
 # Evaluate the pgf at points in the complex plane and save to csv file
 ########################################################################
 
-pgf_cd_size_mv <- function(x,y) mapply(cd_size_pgf, x, y, MoreArgs =  c(n = 1000, p1 = 0.09, alpha = 0.0, deg_pgf = EECC_pgf, dGdx = EECC_dGdx, dGdy = EECC_dGdy))
+pgf_cd_size_mv <- function(x,y) mapply(cd_size_pgf, x, y, MoreArgs =  c(n = 1000, p1 = 0.005, alpha = 0.005, deg_pgf = EECC_pgf, dGdx = EECC_dGdx, dGdy = EECC_dGdy))
 
 M <- 50
 N <- 50
@@ -149,10 +155,14 @@ registerDoParallel(cluster)
 # increase "total" for more simulations
 tic()
 pois_sims <- foreach(i=1:6, .combine = "rbind", .packages = c("igraph", "dplyr", "stringr")) %dopar%
-  cascade_sim_par(i, net = net, adj = adjacency, p1 = 0.09, alpha = 0.0, total = 166667)
+  cascade_sim_par(i, net = net, adj = adjacency, p1 = 0.005, alpha = 0.005, total = 166667)
 toc()
 
 stopImplicitCluster()
+
+#pois_sims %>% write_csv("power_grid_sims.csv")
+#pois_sims %>% write_csv("science_coauthorship_sime.csv")
+#pois_sims %>% write_csv("celegans_sims.csv")
 
 size_cd_dist.df <- pois_sims %>%
   group_by(ID) %>%
