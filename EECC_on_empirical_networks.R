@@ -18,10 +18,11 @@ source("functions.R")
 net <- read_graph("power.gml", format = "gml") %>%
   set_vertex_attr("name", value = as.character(1:gorder(.)))
 
-# this bit gets the lcc
+# this bit gets the lcc - only needed fo science co-authorship network
 lcc_id <- which(components(net)$csize == max(components(net)$csize))
 vertices_in_lcc <- V(net)[which(components(net)$membership == lcc_id)]
 net <- induced_subgraph(net, vertices_in_lcc)
+#----
 
 V(net)$name <- as.character(1:gorder(net))
 adjacency <- as_adj(net)
@@ -33,6 +34,7 @@ adjacency <- as_adj(net)
 
 ########
 
+# get the edge-disjoint edge clique cover
 tic()
 EECC <- EECC_generator(net, max_cl_size = 3)
 toc()
@@ -46,6 +48,9 @@ toc()
 EECC %>% group_by(cl_ID) %>%
   summarise(clique_size = n_distinct(c(vertex_1, vertex_2))) %>% arrange(desc(clique_size)) %>%
   group_by(clique_size) %>% summarise(n())
+
+# here we are getting the clique distribution from the EECC, allowing us to find the 
+# pgf for the Newman-Miller distribution
 
 EECC <- EECC %>% group_by(cl_ID) %>% mutate(size = n_distinct(c(vertex_1, vertex_2))) %>%
   arrange(desc(size))
@@ -64,6 +69,7 @@ EECC_deg_prob <- EECC_deg_dist %>% #filter(n_3!=0 & n_2!=0) %>%
 EECC_pgf <- function(x, y, deg_prob = EECC_deg_prob){
   return(sum((deg_prob$p)*(x^deg_prob$n_2)*(y^deg_prob$n_3)))
 }
+# need the partial derivatives for the cascade size pgf (and others)
 EECC_dGdx <- function(x, y, deg_prob = EECC_deg_prob){
   return(sum((deg_prob$p)*(deg_prob$n_2)*(x^(deg_prob$n_2 - 1))*(y^deg_prob$n_3)))
 }
@@ -86,6 +92,7 @@ theoretical_size_dist.df <- theoretical_size_dist.df %>% mutate(cdf = cumsum(pro
 cluster <- makeCluster(6)
 registerDoParallel(cluster)
 
+# simulation function to generate cascades
 tic()
 cascades.df <- foreach(i=1:6, .combine = "rbind", .packages = c("igraph", "dplyr", "stringr")) %dopar%
   cascade_sim_par(j = i, net = net, adj = adjacency, p = 0.05, alpha = 0.0, total = 166667)
@@ -93,6 +100,7 @@ toc()
 
 stopImplicitCluster()
 
+# find the distribution of cascade sizes from simulations
 cascade_size_dist.df <- cascades.df %>% group_by(ID) %>%
   summarise(size = n_distinct(c(parent, child))) %>% group_by(size) %>%
   summarise(n = n()) %>% ungroup()
@@ -105,8 +113,10 @@ cascade_size_dist.df <- cascade_size_dist.df %>% mutate(p = n/sum(n), cdf = cums
 #cascade_size_dist.df <- read_csv("cascade_size_cc.csv")
 #cascade_size_dist.df <- read_csv("c_elegans_cascade_size.csv")
 #cascade_size_dist.df <- read_csv("cascade_size_sc.csv")
-#### try SED
 
+#### try SED (for comparison)
+
+# instead of the clique distribution we get the degree distribution
 degree_dist <- net %>% degree() %>% tibble(k = .) %>%
   group_by(k) %>% summarise(n = n()) %>%
   ungroup() %>% mutate(p = n/sum(n))
@@ -142,10 +152,14 @@ cascade_size_simple_pgf <- function(z,p,tol = 10^(-5), dist = degree_dist, verbo
   return(R_tilde)
 }
 
+# just checking that it works
 cascade_size_simple_pgf(z = 0.1, p = 0.005, dist = degree_dist, verbose = TRUE)
 
+# create a function that takes in a vector of values and evaluates the pgf at those values
 pgf_size_simple_vec <- function(x) sapply(x, cascade_size_simple_pgf, p = 0.05, dist = degree_dist)
 
+# this function evaluates the pgf at M evenly spaced points around the unit circle in the complex plane,
+# inverting it to return the distribution
 theoretical_size_dist_simple.df <- invert_pgf_via_ifft(pgf_size_simple_vec, M = 100)
 
 theoretical_size_dist_simple.df <- theoretical_size_dist_simple.df %>% filter(cascade_size>0)
@@ -171,10 +185,13 @@ cascade_size_dist.df %>% rename(cascade_size = size, prob = p) %>% filter(ccdf >
 
 ######################################################################################
 # Build a larger network from the distribution of the science co-authorship network
+# (and others) as approximated by the EECC
+# this gives us the plots in Figure C.1.
 ######################################################################################
 
 EECC_deg_prob
 
+# generate a network from a given Newman-Miller distribution
 net_gen_joint_dist <- function(n = 100, joint_dist){
   nodes <- str_c("v_",1:n, sep="")
   node_deg_indices <- sample(1:nrow(joint_dist),size = n, replace = TRUE, prob = joint_dist$p)
@@ -202,13 +219,15 @@ net_gen_joint_dist <- function(n = 100, joint_dist){
 
 new_net_same_size <- net_gen_joint_dist(n = 4941, joint_dist = EECC_deg_prob)
 same_size_adj <- as_adj(new_net_same_size)
+# the one below is to make a larger network in the case of small networks
+# where finite-size effects might be substantial
 new_net_10000 <- net_gen_joint_dist(n = 1000, joint_dist = EECC_deg_prob)
 adj_10000 <- as_adj(new_net_10000)
 new_net %>% transitivity()
 
 cluster <- makeCluster(6)
 registerDoParallel(cluster)
-
+# simulate cascades on these new networks
 tic()
 new_net_small_cascades.df <- foreach(i=1:6, .combine = "rbind", .packages = c("igraph", "dplyr", "stringr")) %dopar%
   cascade_sim_par(j = i, net = new_net_same_size, adj = same_size_adj, p = 0.04, alpha = 0.15, total = 166667)
@@ -220,6 +239,7 @@ toc()
 
 stopImplicitCluster()
 
+# tidy this simulation information into their distributions
 cascade_size_dist_small.df <- new_net_small_cascades.df %>% group_by(ID) %>%
   summarise(size = n_distinct(c(parent, child))) %>% group_by(size) %>%
   summarise(n = n()) %>% ungroup()
@@ -238,6 +258,7 @@ cascade_size_dist_large.df <- cascade_size_dist_large.df %>% rename(cascade_size
 
 cascade_size_dist.df <- cascade_size_dist.df %>% rename(cascade_size = size, prob = p) %>% filter(ccdf > 0)
 
+# for plotting label the networks that the simulations have come from
 cascade_size_all_dists.df <- cascade_size_dist.df %>% mutate(network = "empirical") %>%
   add_row(cascade_size_dist_small.df%>% mutate(network = "4947 nodes")) #%>%
   add_row(cascade_size_dist_large.df%>% mutate(network = "1,000 nodes")) %>% arrange((network))

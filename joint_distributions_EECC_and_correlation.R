@@ -23,14 +23,16 @@ pois_dGds3 <- function(x, y, v = 4, u = 1) u*double_poisson_pgf(x, y, v, u) # pa
 net <- read_graph("celegans_metabolic.net", format = "pajek") %>%
   set_vertex_attr("name", value = as.character(1:gorder(.)))
 
-# this bit gets the lcc
+# this bit gets the lcc (required for the network science co-authorship network)
 lcc_id <- which(components(net)$csize == max(components(net)$csize))
 vertices_in_lcc <- V(net)[which(components(net)$membership == lcc_id)]
 net <- induced_subgraph(net, vertices_in_lcc)
+#---
 
 V(net)$name <- as.character(1:gorder(net))
 adjacency <- as_adj(net)
 
+# generate the EECC for net (the network you are interested in)
 EECC <- EECC_generator(net, max_cl_size = 3)
 
 EECC %>% group_by(cl_ID) %>%
@@ -104,8 +106,11 @@ cd_size_pgf(1,1, deg_pgf = EECC_pgf, dGdx = EECC_dGdx, dGdy = EECC_dGdy)
 # Evaluate the pgf at points in the complex plane and save to csv file
 ########################################################################
 
+# set up a function that will take in a matrix of the values that we want to evalutate the joint pgf at and return the values
 pgf_cd_size_mv <- function(x,y) mapply(cd_size_pgf, x, y, MoreArgs =  c(n = 1000, p1 = 0.005, alpha = 0.005, deg_pgf = EECC_pgf, dGdx = EECC_dGdx, dGdy = EECC_dGdy))
 
+# M is the number of values we want to compute for x and N is the same for y
+# we do all combinations of the first M and N values of x and y respectively
 M <- 50
 N <- 50
 
@@ -121,6 +126,7 @@ pgf_to_invert <- pgf_evaluated.df %>% mutate(P_ft = pgf_evaluated) %>%
          P_re = Re(P_ft), P_im = Im(P_ft)) %>%
   select(-c(x_vals, y_vals, P_ft))
 
+# write this to a csv and then we call it into the python script to invert it
 pgf_to_invert %>% write_csv("joint_dist_fft.csv")
 
 # next step is to run the "joint_pgf_inversion.py" script
@@ -130,7 +136,7 @@ joint_dist_size_cd <- read_delim("net_science_probabilities.csv", col_names = FA
 # moments of the distribution to find the correlation
 
 # X - size, Y - cumulative depth
-
+# these are the moments
 E_X <- sum(rowSums(joint_dist_size_cd)*(0:49))
 E_Y <- sum(colSums(joint_dist_size_cd)*(0:49))
 E_X_squared <- sum(rowSums(joint_dist_size_cd)*((0:49)^2))
@@ -145,6 +151,7 @@ EATD <- sum(t(joint_dist_size_cd[2:50,]/(1:49))*(0:49))
 # compare to simulations
 ################################
 
+# generate a doubly-Poisson network
 pois_net <- net_gen_double_poisson(n = 10000, v = 4, u = 1)
 pois_adj <- as_adj(pois_net)
 
@@ -160,10 +167,13 @@ toc()
 
 stopImplicitCluster()
 
+# we have also done this for the three real-world networks
+
 #pois_sims %>% write_csv("power_grid_sims.csv")
 #pois_sims %>% write_csv("science_coauthorship_sime.csv")
 #pois_sims %>% write_csv("celegans_sims.csv")
 
+# find the joint distrbution of cascade size and cumulative depth
 size_cd_dist.df <- pois_sims %>%
   group_by(ID) %>%
   summarise(size = n_distinct(c(parent, child)), cd = sum(generation)) %>%
@@ -172,6 +182,8 @@ size_cd_dist.df <- pois_sims %>%
 n_zero <- 6*166667 - sum(size_cd_dist.df$N)
 
 size_cd_dist.df <- size_cd_dist.df %>% add_row(tibble(size = 1, cd = 0, N = n_zero)) %>% arrange(size, cd) %>% mutate(p = N/sum(N))
+
+# find the EATD and Pearson's correlation coefficient from simulations:
 
 EATD_sim <- size_cd_dist.df %>% mutate(average_depth = cd/size) %>% summarise(EATD = sum(p*average_depth))
 

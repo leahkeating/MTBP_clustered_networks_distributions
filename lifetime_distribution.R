@@ -14,6 +14,8 @@ double_poisson_pgf <- function(x, y, v = 2, u = 2) exp(u*(x-1) + v*(y - 1))
 pois_dGds1 <- function(x, y, v = 2, u = 2) v*double_poisson_pgf(x, y, v, u) # partial derivative wrt s1
 pois_dGds3 <- function(x, y, v = 2, u = 2) u*double_poisson_pgf(x, y, v, u) # partial derivative wrt s3
 
+# the pgf for the number of particles in generation N:
+
 particle_pgf <- function(z,p,alpha,N=1000, deg_pgf, dGdx, dGdy){
   if(N == 0){
     R_tilde <- z
@@ -40,11 +42,15 @@ particle_pgf <- function(z,p,alpha,N=1000, deg_pgf, dGdx, dGdy){
 
 particle_pgf(z = 0, p = 0.2, N = 7, alpha = 0.01, deg_pgf = double_poisson_pgf, dGdx = pois_dGds3, dGdy = pois_dGds1)
 
+# the probability that there are no particles in generation in can be used to find the
+# probability that the lifetime is N generations
+
 prob_no_particles_in_gen_n <- function(N_max) sapply(N_max, particle_pgf, z = 0, p = 0.05, alpha = 0.2, deg_pgf = double_poisson_pgf, dGdx = pois_dGds3, dGdy = pois_dGds1)
 
 lifetime_dist_theory.df <- prob_no_particles_in_gen_n(N_max = 0:20) %>%
   tibble(prob_no_particles = .) %>%
   mutate(n = 0:20) %>%
+  # lag gives the "prob_no_particles" for the previous  generation
   mutate(omega_n = prob_no_particles - lag(prob_no_particles)) %>%
   filter(n>0) %>%
   rename(lifetime = n) %>%
